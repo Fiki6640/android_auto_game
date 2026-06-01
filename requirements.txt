@@ -1,0 +1,6 @@
+# Android Game Bot - 依赖说明
+opencv-python-headless
+numpy
+pyyaml
+
+# pip install opencv-python-headless numpy pyyaml

@@ -1,0 +1,66 @@
+# ==========================================
+# Android Bot 配置文件
+# ==========================================
+
+# ADB 设备地址 (WiFi 连接)
+device: "192.168.5.160:6666"  # <-- 改成你的设备 IP:端口
+
+# 截图循环间隔（秒）
+interval: 0.3
+
+# 图片匹配阈值 (0~1, 越高越严格, 推荐 0.8~0.9)
+threshold: 0.85
+
+# ADB 路径 (留空则自动查找)
+adb_path: "adb"
+
+# 截图保存路径
+screenshot_dir: "screenshots"
+
+# 任务列表 (按顺序检查，第一个匹配到的就执行)
+tasks:
+  - name: "帮助"
+    enabled: true
+    template: "templates/help_new.png"
+    action: "tap"                           # 动作类型: tap / swipe / key
+    # tap 动作: 直接点击匹配区域中心
+    # 可选偏移 (相对于匹配中心点)
+    offset_x: 0
+    offset_y: 0
+    # 点击后等待（秒）
+    cooldown: 0.3
+    # 最多连续触发次数 (0 = 无限)
+    max_triggers: 0
+
+  # 按键示例（如返回键）
+  # - name: "返回键示例"
+  #   enabled: false
+  #   template: "templates/back_trigger.png"
+  #   action: "key"
+  #   keycode: 4               # 4=返回, 3=HOME, 187=多任务
+  #   cooldown: 1.0
+  #   max_triggers: 0
+
+# ==========================================
+# 步骤链（按顺序执行，上一步成功后才会检查下一步）
+# ==========================================
+chains:
+  - name: "治疗"
+    enabled: true
+    reset_timeout: 10                 # 超过N秒未推进下一步就重置
+    steps:
+      - template: "templates/1.png"   # 第1步: 点击右下角小人图标
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+      - template: "templates/2.png"   # 第2步: 点击"治疗"按钮
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65   
+      - template: "templates/3.png"   # 第3步: 点击"联盟互助"按钮
+        action: "tap"
+        cooldown: 0.1
+      - action: "tap_coord"           # 第4步: 点击固定坐标(700,400)
+        x: 700
+        y: 400
+        cooldown: 0.1
