@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Android Game Bot
+Android Auto Game
 ================
 WiFi ADB + OpenCV 截图匹配 + 自动点击
 用法: python bot.py [--config config.yaml] [--device 192.168.x.x:5555]
@@ -371,7 +371,7 @@ def test_match(screenshot: str, template: str, threshold: float = 0.85):
 
 # ==================== 入口 ====================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Android Game Bot")
+    parser = argparse.ArgumentParser(description="Android Auto Game")
     parser.add_argument("--config", default="config.yaml", help="配置文件路径")
     parser.add_argument("--device", default=None, help="设备地址, 如 192.168.1.100:5555")
     parser.add_argument("--capture", action="store_true", help="仅截一张图用于制作模板")

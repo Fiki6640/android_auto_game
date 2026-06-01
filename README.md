@@ -1,8 +1,8 @@
-## Android Game Bot — 快速上手指南
+## Android Auto Game — 快速上手指南
 
 ### 📁 目录结构
 ```
-android-bot/
+android-auto-game/
 ├── bot.py           # 主程序
 ├── config.yaml      # 配置文件（改这里）
 ├── requirements.txt
