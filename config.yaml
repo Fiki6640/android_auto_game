@@ -32,6 +32,15 @@ tasks:
     # 最多连续触发次数 (0 = 无限)
     max_triggers: 0
 
+  - name: "关闭聊天"
+    enabled: true
+    template: "templates/close_chat.png"
+    action: "tap"
+    offset_x: -120
+    offset_y: 0
+    cooldown: 0.3
+    max_triggers: 0
+
   # 按键示例（如返回键）
   # - name: "返回键示例"
   #   enabled: false
