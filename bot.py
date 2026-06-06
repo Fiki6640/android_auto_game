@@ -358,8 +358,16 @@ class GameBot:
                     else:
                         log.warning(f"📊 [{mname}] 前置模板未匹配，仍继续监控")
 
-            text = ocr_region(screenshot_path, monitor["region"])
-            current, total = parse_fraction(text)
+            # OCR 识别，失败时重试
+            current, total = None, None
+            for _attempt in range(3):
+                text = ocr_region(screenshot_path, monitor["region"])
+                current, total = parse_fraction(text)
+                if current is not None and total is not None:
+                    break
+                if _attempt < 2:
+                    log.warning(f"📊 [{mname}] OCR 识别失败(第{_attempt+1}次): '{text}'，重试...")
+                    time.sleep(0.3)
 
             # fixed_total: 总值已知时使用固定值，并校验 current 不超过 total
             fixed_total = monitor.get("fixed_total", 0)

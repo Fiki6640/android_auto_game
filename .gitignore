@@ -1,5 +1,11 @@
 __pycache__/
 *.pyc
-screenshots/*.png
+*.pyo
+screenshots/
 bot.log
-screenshots/*/*.png
+.trae/
+dist/
+build/
+*.egg-info/
+.venv/
+uv.lock

@@ -445,33 +445,77 @@ class ScrcpyWidget(QWidget):
         except Exception as e:
             self.log_message.emit(f"[ADB] 按键失败: {e}")
 
+    def _send_scrcpy_shortcut(self, keys: list):
+        """向嵌入的 scrcpy 窗口发送快捷键（通过 Win32 PostMessage）
+        keys: 虚拟键码列表，如 [VK_MENU, VK_O] 表示 Alt+O
+        """
+        if not self._embedded_hwnd or sys.platform != "win32":
+            return False
+        try:
+            import ctypes
+            WM_KEYDOWN = 0x0100
+            WM_KEYUP = 0x0101
+            # 按下所有键
+            for key in keys:
+                ctypes.windll.user32.PostMessageW(self._embedded_hwnd, WM_KEYDOWN, key, 0)
+            # 释放所有键（逆序）
+            for key in reversed(keys):
+                ctypes.windll.user32.PostMessageW(self._embedded_hwnd, WM_KEYUP, key, 0)
+            return True
+        except Exception:
+            return False
+
     def _toggle_screen_off(self, checked: bool):
-        """切换手机屏幕显示：熄灭手机屏幕但保持系统运行，电脑端仍可看到画面"""
+        """切换手机屏幕显示：熄灭手机屏幕但保持系统运行，电脑端仍可看到画面
+        优先通过 scrcpy 快捷键 MOD+o / MOD+Shift+o 实现（与 scrcpy 原生关屏一致，电源键可恢复），
+        scrcpy 不可用时降级为亮度方式。
+        """
         if not self._device:
             self.log_message.emit("[ADB] 未设置设备，无法操作")
             return
-        try:
-            import subprocess
-            if checked:
-                # 熄灭屏幕：将亮度设为0，关闭自动亮度
+
+        # scrcpy 快捷键：MOD(Left Alt)=0x12, Shift=0x10, O=0x4F
+        VK_MENU = 0x12
+        VK_SHIFT = 0x10
+        VK_O = 0x4F
+
+        if checked:
+            # 尝试通过 scrcpy 快捷键关屏（MOD+o）
+            if self._send_scrcpy_shortcut([VK_MENU, VK_O]):
+                self.log_message.emit("[scrcpy] 发送关屏快捷键 (Alt+O)")
+                return
+            # 降级：亮度方式
+            try:
+                import subprocess
+                flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 subprocess.run(
                     [self._adb_path, "-s", self._device, "shell",
-                     "settings put system screen_brightness_mode 0 && settings put system screen_brightness 0"],
-                    timeout=5,
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                     "settings put system screen_brightness_mode 0 && "
+                     "settings put system screen_brightness 0 && "
+                     "svc power stayon true"],
+                    timeout=5, creationflags=flags,
                 )
-                self.log_message.emit("[ADB] 屏幕已熄灭（仅电脑端显示）")
-            else:
-                # 恢复屏幕：恢复亮度
+                self.log_message.emit("[ADB] 屏幕已熄灭（亮度模式，scrcpy未嵌入）")
+            except Exception as e:
+                self.log_message.emit(f"[ADB] 操作失败: {e}")
+        else:
+            # 尝试通过 scrcpy 快捷键开屏（MOD+Shift+o）
+            if self._send_scrcpy_shortcut([VK_MENU, VK_SHIFT, VK_O]):
+                self.log_message.emit("[scrcpy] 发送开屏快捷键 (Alt+Shift+O)")
+                return
+            # 降级：恢复亮度
+            try:
+                import subprocess
+                flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 subprocess.run(
                     [self._adb_path, "-s", self._device, "shell",
-                     "settings put system screen_brightness 128 && settings put system screen_brightness_mode 1"],
-                    timeout=5,
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                     "settings put system screen_brightness 128 && "
+                     "settings put system screen_brightness_mode 1"],
+                    timeout=5, creationflags=flags,
                 )
-                self.log_message.emit("[ADB] 屏幕已恢复")
-        except Exception as e:
-            self.log_message.emit(f"[ADB] 操作失败: {e}")
+                self.log_message.emit("[ADB] 屏幕已恢复（亮度模式）")
+            except Exception as e:
+                self.log_message.emit(f"[ADB] 操作失败: {e}")
 
     def _on_scrcpy_output(self):
         """读取 scrcpy 输出"""
@@ -1566,6 +1610,12 @@ class ConfigPanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # 设置 Windows 任务栏图标：必须设置 AppUserModelID，否则任务栏显示 Python 默认图标
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AndroidBot.GameAutomation")
+
         self.setWindowTitle("无尽冬日 - 自动化")
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "图标.png")
         if os.path.exists(icon_path):
@@ -1618,7 +1668,7 @@ class MainWindow(QMainWindow):
 
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([380, 900])
+        splitter.setSizes([500, 600])
 
         self.setCentralWidget(splitter)
 
