@@ -26,6 +26,11 @@ datas = [
     (os.path.join(pyside6_dir, 'plugins', 'styles'), 'PySide6/plugins/styles'),
     # PySide6 translations
     (os.path.join(pyside6_dir, 'translations'), 'PySide6/translations'),
+    # 默认配置和模板
+    (os.path.join(ROOT, 'config.yaml'), '.'),
+    (os.path.join(ROOT, 'templates.zip'), '.'),
+    # 图标
+    (os.path.join(ROOT, '图标.png'), '.'),
 ]
 
 # 过滤掉不存在的路径
