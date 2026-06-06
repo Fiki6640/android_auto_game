@@ -1,137 +1,125 @@
-# ==========================================
-# Android Auto Game 配置文件
-# ==========================================
-
-# ADB 设备地址 (WiFi 连接)
-device: "192.168.5.160:6666"  # <-- 改成你的设备 IP:端口
-
-# 截图循环间隔（秒）
+device: 192.168.5.160:6666
 interval: 0.3
-
-# 图片匹配阈值 (0~1, 越高越严格, 推荐 0.8~0.9)
 threshold: 0.85
-
-# ADB 路径 (留空则自动查找)
-adb_path: "adb"
-
-# 截图保存路径
-screenshot_dir: "screenshots"
-
-# 任务列表 (按顺序检查，第一个匹配到的就执行)
+adb_path: adb
+screenshot_dir: screenshots
+scrcpy:
+  enabled: true
+  path: scrcpy
+  max_size: 800
 tasks:
-  - name: "帮助"
-    enabled: true
-    template: "templates/help_new.png"
-    action: "tap"                           # 动作类型: tap / swipe / key
-    # tap 动作: 直接点击匹配区域中心
-    # 可选偏移 (相对于匹配中心点)
+- name: 帮助
+  enabled: true
+  template: templates/help_new.png
+  action: tap
+  offset_x: 0
+  offset_y: 0
+  cooldown: 0.3
+  max_triggers: 0
+- name: 关闭聊天
+  enabled: true
+  template: templates/close_chat.png
+  action: tap
+  offset_x: -120
+  offset_y: 0
+  cooldown: 0.3
+  max_triggers: 0
+chains:
+- name: 治疗
+  enabled: true
+  reset_timeout: 10
+  steps:
+  - template: templates/1.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/2.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/3.png
+    action: tap
+    cooldown: 0.1
+  - action: tap_coord
+    x: 700
+    y: 400
+    cooldown: 0.1
+- name: 打巨兽
+  enabled: true
+  reset_timeout: 10
+  skip_conditions:
+  - monitor: 队列检测
+    field: value
+    op: <
+    value: 1
+  - monitor: 体力检测
+    field: current
+    op: <
+    value: 25
+  steps:
+  - action: tap
+    cooldown: 0.3
+    threshold: 0.85
+    template: C:/Users/fikiy/WorkBuddy/android-bot/templates/crop_032840_1192_2968_1400_3206.png
+    x: 0
+    y: 0
     offset_x: 0
     offset_y: 0
-    # 点击后等待（秒）
-    cooldown: 0.3
-    # 最多连续触发次数 (0 = 无限)
-    max_triggers: 0
-
-  - name: "关闭聊天"
-    enabled: true
-    template: "templates/close_chat.png"
-    action: "tap"
-    offset_x: -120
-    offset_y: 0
-    cooldown: 0.3
-    max_triggers: 0
-
-  # 按键示例（如返回键）
-  # - name: "返回键示例"
-  #   enabled: false
-  #   template: "templates/back_trigger.png"
-  #   action: "key"
-  #   keycode: 4               # 4=返回, 3=HOME, 187=多任务
-  #   cooldown: 1.0
-  #   max_triggers: 0
-
-# ==========================================
-# 步骤链（按顺序执行，上一步成功后才会检查下一步）
-# ==========================================
-chains:
-  - name: "治疗"
-    enabled: true
-    reset_timeout: 10                 # 超过N秒未推进下一步就重置
-    steps:
-      - template: "templates/1.png"   # 第1步: 点击右下角小人图标
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-      - template: "templates/2.png"   # 第2步: 点击"治疗"按钮
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65   
-      - template: "templates/3.png"   # 第3步: 点击"联盟互助"按钮
-        action: "tap"
-        cooldown: 0.1
-      - action: "tap_coord"           # 第4步: 点击固定坐标(700,400)
-        x: 700
-        y: 400
-        cooldown: 0.1
-  - name: "打巨兽"
-    enabled: true
-    reset_timeout: 10                 # 超过N秒未推进下一步就重置
-    skip_conditions:      
-      - monitor: "队列检测"            # 队列剩余低于1，不进行
-        field: "value"
-        op: "<"
-        value: 1             
-      - monitor: "体力检测"            # 体力低于25，不进行
-        field: "current"
-        op: "<"
-        value: 25                      # 条件不满足时跳过此链
-
-    steps:
-      - template: "templates/2-1.png"   # 第1步: 点击 “搜索”图标
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-      - template: "templates/2-2.png"   # 第2步: 点击 巨兽
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-      - template: "templates/2-3.png"   # 第3步: 点击 搜索
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-      - template: "templates/2-4.png"   # 第4步: 点击 发起集结
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-      - template: "templates/2-5.png"   # 第5步: 点击 集结
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-      - template: "templates/2-6.png"   # 第6步: 点击 出征
-        action: "tap"
-        cooldown: 0.1
-        threshold: 0.65               # 数字变化，降低阈值
-    close_template: "templates/x.png"  # 识别完成后点击关闭按钮
-
-
-# ==========================================
-# 监控项（OCR 数值检测，按间隔定时检查）
-# ==========================================
+    keycode: 4
+    skippable: true
+  - template: templates/2-1.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/2-2.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/2-3.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/2-4.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/2-5.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  - template: templates/2-6.png
+    action: tap
+    cooldown: 0.1
+    threshold: 0.65
+  close_template: templates/x.png
 monitors:
-  - name: "队列检测"
-    enabled: true
-    region: [401, 511, 484, 597]     # 文字区域 x1,y1,x2,y2
-    report: "remaining"                # remaining=计算剩余(分母-分子), current=直接报告分子
-    interval: 5                       # 检查间隔（秒）
-    alert_threshold: 0                 # 剩余 <= 此值时提醒, 0=不提醒
-
-  - name: "体力检测"
-    enabled: true
-    pre_tap: [92, 186]                 # 先点击此处打开体力页面
-    region: [228, 2862, 384, 2916]     # 体力数字区域 x1,y1,x2,y2
-    fixed_total: 200                   # 总体力固定值（OCR 只需识别当前值）
-    report: "current"                  # 报告当前体力值（分子）
-    interval: 60                       # 检查间隔（秒），体力变化慢
-    alert_threshold: 25                # 体力 <= 此值时提醒
-    close_template: "templates/close.png"  # 识别完成后点击关闭按钮
-
+- name: 队列检测
+  enabled: true
+  region:
+  - 401
+  - 511
+  - 484
+  - 597
+  report: remaining
+  interval: 5
+  alert_threshold: 0
+  pre_type: template
+  pre_template: templates/crop_035239_1183_2946_1417_3211.png
+  pre_skippable: false
+  fixed_total: 0
+  close_template: ''
+- name: 体力检测
+  enabled: true
+  pre_tap:
+  - 92
+  - 186
+  region:
+  - 228
+  - 2862
+  - 384
+  - 2916
+  fixed_total: 200
+  report: current
+  interval: 60
+  alert_threshold: 25
+  close_template: templates/close.png

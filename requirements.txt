@@ -3,5 +3,6 @@ opencv-python-headless
 numpy
 pyyaml
 rapidocr-onnxruntime
+PySide6
 
-# pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ opencv-python-headless numpy pyyaml rapidocr-onnxruntime
+# pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ opencv-python-headless numpy pyyaml rapidocr-onnxruntime PySide6

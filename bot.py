@@ -31,7 +31,8 @@ try:
     import winsound
     def beep():
         """播放完成提示音"""
-        winsound.Beep(800, 200)
+        # 800hz频率，200ms时长
+        # winsound.Beep(800, 200)
 except ImportError:
     def beep():
         print("\a", end="", flush=True)
@@ -62,6 +63,21 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("AndroidBot")
+
+
+class CallbackLogHandler(logging.Handler):
+    """将日志转发到回调函数（供 GUI 使用）"""
+    def __init__(self, callback=None):
+        super().__init__()
+        self.callback = callback
+
+    def emit(self, record):
+        if self.callback:
+            msg = self.format(record)
+            try:
+                self.callback(msg)
+            except Exception:
+                pass
 
 
 # ==================== ADB 工具类 ====================
@@ -227,7 +243,15 @@ def parse_fraction(text: str):
 
 
 class GameBot:
-    def __init__(self, config_path: str, device_override: str | None = None):
+    def __init__(self, config_path: str, device_override: str | None = None,
+                 on_screenshot=None, on_log=None, on_monitor=None):
+        self.on_screenshot = on_screenshot
+        self.on_log = on_log
+        self.on_monitor = on_monitor
+        if on_log:
+            cb_handler = CallbackLogHandler(on_log)
+            cb_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"))
+            log.addHandler(cb_handler)
         with open(config_path, "r", encoding="utf-8") as f:
             self.cfg = yaml.safe_load(f)
 
@@ -242,6 +266,7 @@ class GameBot:
         self.interval = float(self.cfg.get("interval", 1.0))
         self.threshold = float(self.cfg.get("threshold", 0.85))
         self.screenshot_dir = self.cfg.get("screenshot_dir", "screenshots")
+        self._stop_requested = False
         self.tasks = [t for t in self.cfg.get("tasks", []) if t.get("enabled", True)]
         self.trigger_counts = {t["name"]: 0 for t in self.tasks}
         self.cooldowns = {t["name"]: 0.0 for t in self.tasks}
@@ -302,8 +327,9 @@ class GameBot:
 
             self.monitor_last_check[mname] = now
 
-            # 前置点击（如体力检测需要先打开页面）
-            if "pre_tap" in monitor:
+            # 前置操作
+            pre_type = monitor.get("pre_type", "tap" if monitor.get("pre_tap") else "none")
+            if pre_type == "tap" and "pre_tap" in monitor:
                 px, py = monitor["pre_tap"]
                 log.info(f"📊 [{mname}] 前置点击 ({px},{py})")
                 self.adb.tap(px, py)
@@ -312,6 +338,25 @@ class GameBot:
                 if not self.adb.screenshot(screenshot_path):
                     log.warning(f"📊 [{mname}] 截图失败，跳过")
                     continue
+            elif pre_type == "template" and monitor.get("pre_template"):
+                pre_template = monitor["pre_template"]
+                matched, cx, cy, conf = match_template(
+                    screenshot_path, pre_template, self.threshold
+                )
+                if matched:
+                    log.info(f"📊 [{mname}] 前置匹配成功 ({cx},{cy}) 置信度={conf:.3f}，点击")
+                    self.adb.tap(cx, cy)
+                    time.sleep(0.5)
+                    if not self.adb.screenshot(screenshot_path):
+                        log.warning(f"📊 [{mname}] 截图失败，跳过")
+                        continue
+                else:
+                    skippable = monitor.get("pre_skippable", True)
+                    if skippable:
+                        log.info(f"📊 [{mname}] 前置模板未匹配，跳过本次监控")
+                        continue
+                    else:
+                        log.warning(f"📊 [{mname}] 前置模板未匹配，仍继续监控")
 
             text = ocr_region(screenshot_path, monitor["region"])
             current, total = parse_fraction(text)
@@ -338,6 +383,8 @@ class GameBot:
 
                 # 保存最新值，供链的跳过条件使用
                 self.monitor_values[mname] = {"current": current, "total": total, "value": value}
+                if self.on_monitor:
+                    self.on_monitor(dict(self.monitor_values))
 
                 # 阈值提醒
                 alert = monitor.get("alert_threshold", 0)
@@ -374,7 +421,7 @@ class GameBot:
         loop = 0
 
         try:
-            while True:
+            while not self._stop_requested:
                 loop += 1
                 now = time.time()
 
@@ -384,6 +431,13 @@ class GameBot:
                     time.sleep(self.interval * 2)
                     self.adb.connect()
                     continue
+
+                # GUI 回调：通知截图更新
+                if self.on_screenshot:
+                    try:
+                        self.on_screenshot(screenshot_path)
+                    except Exception:
+                        pass
 
                 # 保存调试截图
                 if loop % 30 == 0:
@@ -488,6 +542,19 @@ class GameBot:
                             state["step"] = 0
                             beep()
                         break  # 一次只推进一个链的一步
+                    else:
+                        # 模板未匹配：如果步骤标记为可跳过，跳到下一步
+                        if step_def.get("skippable", False):
+                            log.info(f"⏭️ [{cname}] 第{step_idx+1}步 未匹配，跳过(可跳过步骤)")
+                            state["step"] = step_idx + 1
+                            state["last_advance"] = now
+                            # 检查是否跳到了链末尾
+                            if state["step"] >= len(steps):
+                                log.info(f"🏁 [{cname}] 全部步骤完成！重置")
+                                state["step"] = 0
+                                beep()
+                            # 继续检查下一个链（不 break，让下一轮继续推进此链）
+                            continue
 
                 if action_taken:
                     time.sleep(self.interval)
