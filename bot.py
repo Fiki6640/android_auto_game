@@ -21,7 +21,7 @@ try:
     import yaml
 except ImportError:
     print("[!] 缺少依赖，正在安装...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "opencv-python-headless", "numpy", "pyyaml"])
+    subprocess.check_call(["uv", "sync"])
     import cv2
     import numpy as np
     import yaml
@@ -156,7 +156,76 @@ def match_template(screenshot_path: str, template_path: str, threshold: float = 
     return False, 0, 0, max_val
 
 
-# ==================== 主 Bot 逻辑 ====================
+# ==================== OCR 文字识别 ====================
+_ocr = None
+
+def _get_ocr():
+    global _ocr
+    if _ocr is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+        except ImportError:
+            log.warning("rapidocr 未安装，正在安装...")
+            subprocess.check_call(["uv", "sync"])
+            from rapidocr_onnxruntime import RapidOCR
+        log.info("正在初始化 OCR 模型...")
+        _ocr = RapidOCR()
+        log.info("OCR 模型就绪")
+    return _ocr
+
+
+def ocr_region(screenshot_path: str, region: list) -> str:
+    """
+    对截图的指定区域进行 OCR 文字识别
+    region: [x1, y1, x2, y2]
+    返回: 识别到的文字（去除空白）
+    """
+    screen = imread_cn(screenshot_path)
+    if screen is None:
+        return ""
+
+    x1, y1, x2, y2 = region
+    sh, sw = screen.shape[:2]
+    x1 = max(0, min(x1, sw))
+    y1 = max(0, min(y1, sh))
+    x2 = max(0, min(x2, sw))
+    y2 = max(0, min(y2, sh))
+
+    if x2 <= x1 or y2 <= y1:
+        return ""
+
+    crop = screen[y1:y2, x1:x2]
+
+    # 放大 2 倍提高识别率
+    h, w = crop.shape[:2]
+    crop = cv2.resize(crop, (w * 2, h * 2), interpolation=cv2.INTER_CUBIC)
+
+    try:
+        result, _ = _get_ocr()(crop)
+        if result:
+            # result: [[bbox, text, confidence], ...]
+            texts = [item[1] for item in result]
+            return "".join(texts).strip()
+    except Exception as e:
+        log.warning(f"OCR 调用失败: {e}")
+    return ""
+
+
+def parse_fraction(text: str):
+    """
+    解析 "X/Y" 格式的字符串
+    返回: (分子, 分母) 或 (None, None)
+    """
+    text = text.replace(" ", "").replace("O", "0").replace("o", "0")
+    parts = text.split("/")
+    if len(parts) == 2:
+        try:
+            return int(parts[0]), int(parts[1])
+        except ValueError:
+            pass
+    return None, None
+
+
 class GameBot:
     def __init__(self, config_path: str, device_override: str | None = None):
         with open(config_path, "r", encoding="utf-8") as f:
@@ -183,9 +252,14 @@ class GameBot:
         for c in self.chains:
             self.chain_state[c["name"]] = {"step": 0, "last_advance": time.time()}
 
+        # 监控项（OCR 数值检测）
+        self.monitors = [m for m in self.cfg.get("monitors", []) if m.get("enabled", True)]
+        self.monitor_last_check = {}  # name -> timestamp
+        self.monitor_values = {}      # name -> {"current": X, "total": Y, "value": Z}
+
         Path(self.screenshot_dir).mkdir(exist_ok=True)
 
-        log.info(f"已加载 {len(self.tasks)} 个独立任务, {len(self.chains)} 个步骤链")
+        log.info(f"已加载 {len(self.tasks)} 个独立任务, {len(self.chains)} 个步骤链, {len(self.monitors)} 个监控项")
         for t in self.tasks:
             log.info(f"  [独立] {t['name']}  模板: {t['template']}")
         for c in self.chains:
@@ -198,6 +272,8 @@ class GameBot:
                 else:
                     steps_desc.append(s.get("action", "?"))
             log.info(f"  [链] {c['name']}  步骤: {' -> '.join(steps_desc)}")
+        for m in self.monitors:
+            log.info(f"  [监控] {m['name']}  区域: {m['region']}  间隔: {m.get('interval', 60)}s")
 
     def _execute_action(self, task_def: dict, cx: int = 0, cy: int = 0):
         """执行一个动作（tap/swipe/key）"""
@@ -213,6 +289,79 @@ class GameBot:
             self.adb.swipe(sf[0], sf[1], st[0], st[1], dur)
         elif action == "key":
             self.adb.key(task_def.get("keycode", 4))
+
+    def _check_monitors(self, screenshot_path: str, now: float, force: bool = False):
+        """检查所有监控项（OCR 数值检测），force=True 时忽略间隔"""
+        for monitor in self.monitors:
+            mname = monitor["name"]
+            if not force:
+                interval = monitor.get("interval", 60)
+                last = self.monitor_last_check.get(mname, 0)
+                if now - last < interval:
+                    continue
+
+            self.monitor_last_check[mname] = now
+
+            # 前置点击（如体力检测需要先打开页面）
+            if "pre_tap" in monitor:
+                px, py = monitor["pre_tap"]
+                log.info(f"📊 [{mname}] 前置点击 ({px},{py})")
+                self.adb.tap(px, py)
+                time.sleep(0.5)
+                # 重新截图（页面已切换）
+                if not self.adb.screenshot(screenshot_path):
+                    log.warning(f"📊 [{mname}] 截图失败，跳过")
+                    continue
+
+            text = ocr_region(screenshot_path, monitor["region"])
+            current, total = parse_fraction(text)
+
+            # fixed_total: 总值已知时使用固定值，并校验 current 不超过 total
+            fixed_total = monitor.get("fixed_total", 0)
+            if fixed_total > 0:
+                total = fixed_total
+                if current is not None and current > total:
+                    # OCR 多识别了一位，从右侧逐步去掉重复/多余数字
+                    s = str(current)
+                    while len(s) > 1 and int(s) > total:
+                        s = s[:-1]
+                    current = int(s) if s else None
+
+            if current is not None and total is not None:
+                report = monitor.get("report", "current")
+                if report == "remaining":
+                    value = total - current
+                    log.info(f"📊 [{mname}] 队列: {current}/{total}  剩余: {value}")
+                else:
+                    value = current
+                    log.info(f"📊 [{mname}] 体力: {current}/{total}")
+
+                # 保存最新值，供链的跳过条件使用
+                self.monitor_values[mname] = {"current": current, "total": total, "value": value}
+
+                # 阈值提醒
+                alert = monitor.get("alert_threshold", 0)
+                if alert > 0 and value <= alert:
+                    log.warning(f"⚠️ [{mname}] 数值 {value} <= 阈值 {alert}！")
+                    beep()
+            else:
+                log.warning(f"📊 [{mname}] OCR 识别失败: '{text}'")
+
+            # 关闭页面：匹配 close 模板并点击
+            close_template = monitor.get("close_template")
+            if close_template:
+                # 重新截图（确保最新画面）
+                if not self.adb.screenshot(screenshot_path):
+                    log.warning(f"📊 [{mname}] 关闭页面截图失败")
+                else:
+                    matched, cx, cy, conf = match_template(
+                        screenshot_path, close_template, self.threshold
+                    )
+                    if matched:
+                        log.info(f"📊 [{mname}] 关闭页面 ({cx},{cy}) 置信度={conf:.3f}")
+                        self.adb.tap(cx, cy)
+                    else:
+                        log.warning(f"📊 [{mname}] 未匹配到关闭按钮: {close_template}")
 
     def run(self):
         if not self.adb.connect():
@@ -245,12 +394,44 @@ class GameBot:
 
                 action_taken = False
 
+                # 检查是否有链正在执行中
+                chain_active = any(s["step"] > 0 for s in self.chain_state.values())
+
+                # ---- 0. 首次循环：先采集监控数据再执行其他操作 ----
+                if loop == 1 and not chain_active:
+                    self._check_monitors(screenshot_path, now, force=True)
+                    chain_active = any(s["step"] > 0 for s in self.chain_state.values())
+
                 # ---- 1. 优先检查步骤链 ----
                 for chain in self.chains:
                     cname = chain["name"]
                     state = self.chain_state[cname]
                     step_idx = state["step"]
                     steps = chain["steps"]
+
+                    # 前置条件检查：所有条件必须满足才执行链
+                    skip_conditions = chain.get("skip_conditions", [])
+                    if skip_conditions and step_idx == 0:
+                        can_proceed = True
+                        skip_reason = None
+                        for cond in skip_conditions:
+                            mname = cond["monitor"]
+                            mv = self.monitor_values.get(mname)
+                            if mv is None:
+                                # 监控数据尚未采集，不能执行
+                                can_proceed = False
+                                skip_reason = f"{mname}=无数据"
+                                break
+                            field_val = mv.get(cond.get("field", "value"), 0)
+                            op = cond.get("op", "<")
+                            threshold = cond.get("value", 0)
+                            if (op == "<" and field_val < threshold) or (op == "<=" and field_val <= threshold):
+                                can_proceed = False
+                                skip_reason = f"{mname}={field_val} (需>={threshold})"
+                                break
+                        if not can_proceed:
+                            log.info(f"⏭️ [{cname}] 条件不满足，跳过: {skip_reason}")
+                            continue
 
                     if step_idx >= len(steps):
                         # 链已完成，重置
@@ -312,27 +493,32 @@ class GameBot:
                     time.sleep(self.interval)
                     continue
 
-                # ---- 2. 检查独立任务 ----
-                for task in self.tasks:
-                    name = task["name"]
-                    max_t = task.get("max_triggers", 0)
+                # ---- 2. 检查独立任务（链执行中时跳过） ----
+                if not chain_active:
+                    for task in self.tasks:
+                        name = task["name"]
+                        max_t = task.get("max_triggers", 0)
 
-                    if max_t > 0 and self.trigger_counts[name] >= max_t:
-                        continue
+                        if max_t > 0 and self.trigger_counts[name] >= max_t:
+                            continue
 
-                    if now < self.cooldowns[name]:
-                        continue
+                        if now < self.cooldowns[name]:
+                            continue
 
-                    matched, cx, cy, conf = match_template(
-                        screenshot_path, task["template"], self.threshold
-                    )
+                        matched, cx, cy, conf = match_template(
+                            screenshot_path, task["template"], self.threshold
+                        )
 
-                    if matched:
-                        log.info(f"✅ [{name}] 匹配成功 ({cx},{cy}) 置信度={conf:.3f}")
-                        self._execute_action(task, cx, cy)
-                        self.trigger_counts[name] += 1
-                        self.cooldowns[name] = now + task.get("cooldown", 1.0)
-                        action_taken = True
+                        if matched:
+                            log.info(f"✅ [{name}] 匹配成功 ({cx},{cy}) 置信度={conf:.3f}")
+                            self._execute_action(task, cx, cy)
+                            self.trigger_counts[name] += 1
+                            self.cooldowns[name] = now + task.get("cooldown", 1.0)
+                            action_taken = True
+
+                # ---- 3. 检查监控项（链执行中时跳过） ----
+                if not chain_active:
+                    self._check_monitors(screenshot_path, now)
 
                 time.sleep(self.interval)
 

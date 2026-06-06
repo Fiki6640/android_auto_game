@@ -73,3 +73,65 @@ chains:
         x: 700
         y: 400
         cooldown: 0.1
+  - name: "打巨兽"
+    enabled: true
+    reset_timeout: 10                 # 超过N秒未推进下一步就重置
+    skip_conditions:      
+      - monitor: "队列检测"            # 队列剩余低于1，不进行
+        field: "value"
+        op: "<"
+        value: 1             
+      - monitor: "体力检测"            # 体力低于25，不进行
+        field: "current"
+        op: "<"
+        value: 25                      # 条件不满足时跳过此链
+
+    steps:
+      - template: "templates/2-1.png"   # 第1步: 点击 “搜索”图标
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+      - template: "templates/2-2.png"   # 第2步: 点击 巨兽
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+      - template: "templates/2-3.png"   # 第3步: 点击 搜索
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+      - template: "templates/2-4.png"   # 第4步: 点击 发起集结
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+      - template: "templates/2-5.png"   # 第5步: 点击 集结
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+      - template: "templates/2-6.png"   # 第6步: 点击 出征
+        action: "tap"
+        cooldown: 0.1
+        threshold: 0.65               # 数字变化，降低阈值
+    close_template: "templates/x.png"  # 识别完成后点击关闭按钮
+
+
+# ==========================================
+# 监控项（OCR 数值检测，按间隔定时检查）
+# ==========================================
+monitors:
+  - name: "队列检测"
+    enabled: true
+    region: [401, 511, 484, 597]     # 文字区域 x1,y1,x2,y2
+    report: "remaining"                # remaining=计算剩余(分母-分子), current=直接报告分子
+    interval: 5                       # 检查间隔（秒）
+    alert_threshold: 0                 # 剩余 <= 此值时提醒, 0=不提醒
+
+  - name: "体力检测"
+    enabled: true
+    pre_tap: [92, 186]                 # 先点击此处打开体力页面
+    region: [228, 2862, 384, 2916]     # 体力数字区域 x1,y1,x2,y2
+    fixed_total: 200                   # 总体力固定值（OCR 只需识别当前值）
+    report: "current"                  # 报告当前体力值（分子）
+    interval: 60                       # 检查间隔（秒），体力变化慢
+    alert_threshold: 25                # 体力 <= 此值时提醒
+    close_template: "templates/close.png"  # 识别完成后点击关闭按钮
+

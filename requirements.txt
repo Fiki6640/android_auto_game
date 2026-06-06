@@ -2,5 +2,6 @@
 opencv-python-headless
 numpy
 pyyaml
+rapidocr-onnxruntime
 
-# pip install opencv-python-headless numpy pyyaml
+# pip install -i https://pypi.tuna.tsinghua.edu.cn/simple/ opencv-python-headless numpy pyyaml rapidocr-onnxruntime
