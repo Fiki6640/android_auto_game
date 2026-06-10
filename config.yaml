@@ -123,3 +123,4 @@ monitors:
   interval: 60
   alert_threshold: 25
   close_template: templates/close.png
+  pre_type: tap

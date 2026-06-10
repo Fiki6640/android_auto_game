@@ -1640,7 +1640,12 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1100, 750)
         self.resize(1280, 800)
 
-        self._config_path = "config.yaml"
+        # 配置文件路径：放在 exe 旁边（PyInstaller）或脚本旁边
+        if getattr(sys, 'frozen', False):
+            self._app_dir = os.path.dirname(sys.executable)
+        else:
+            self._app_dir = os.path.dirname(os.path.abspath(__file__))
+        self._config_path = os.path.join(self._app_dir, "config.yaml")
         self._config = {}
         self._bot_thread = None
 
@@ -1729,17 +1734,22 @@ class MainWindow(QMainWindow):
                 self._config = yaml.safe_load(f) or {}
         except FileNotFoundError:
             self._config = self._init_default_config()
+        self.config_panel.load_config(self._config)
 
     def _init_default_config(self) -> dict:
         """首次运行时，从默认模板创建 config.yaml 并解压 templates.zip"""
         import shutil, zipfile
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        default_config = os.path.join(base_dir, "config.yaml")
-        templates_zip = os.path.join(base_dir, "templates.zip")
-        templates_dir = os.path.join(base_dir, "templates")
+        # 模板资源在 PyInstaller 打包目录（sys._MEIPASS）或脚本目录
+        if getattr(sys, 'frozen', False):
+            res_dir = sys._MEIPASS
+        else:
+            res_dir = os.path.dirname(os.path.abspath(__file__))
+        default_config = os.path.join(res_dir, "config.yaml")
+        templates_zip = os.path.join(res_dir, "templates.zip")
+        templates_dir = os.path.join(self._app_dir, "templates")
 
-        # 复制默认配置
-        if os.path.exists(default_config):
+        # 复制默认配置（仅当目标不存在时）
+        if os.path.exists(default_config) and not os.path.exists(self._config_path):
             shutil.copy2(default_config, self._config_path)
             self.config_panel.append_log("[INFO] 已从默认模板创建 config.yaml")
             with open(self._config_path, "r", encoding="utf-8") as f:
@@ -1751,14 +1761,14 @@ class MainWindow(QMainWindow):
         # 解压 templates.zip
         if os.path.exists(templates_zip) and not os.path.exists(templates_dir):
             with zipfile.ZipFile(templates_zip, "r") as zf:
-                zf.extractall(base_dir)
+                zf.extractall(self._app_dir)
             self.config_panel.append_log("[INFO] 已解压 templates.zip")
         elif not os.path.exists(templates_zip) and not os.path.exists(templates_dir):
             self.config_panel.append_log("[WARNING] templates.zip 不存在，跳过模板解压")
 
         # 复制图标
-        icon_src = os.path.join(base_dir, "图标.png")
-        icon_dst = os.path.join(os.path.dirname(os.path.abspath(self._config_path)), "图标.png")
+        icon_src = os.path.join(res_dir, "图标.png")
+        icon_dst = os.path.join(self._app_dir, "图标.png")
         if os.path.exists(icon_src) and not os.path.exists(icon_dst):
             shutil.copy2(icon_src, icon_dst)
             self.config_panel.append_log("[INFO] 已复制图标文件")
