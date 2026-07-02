@@ -1,6 +1,6 @@
 [project]
 name = "android-bot"
-version = "1.1.0"
+version = "1.0.4"
 description = "WiFi ADB + OpenCV 截图匹配 + 自动点击"
 requires-python = ">=3.10"
 dependencies = [
