@@ -5,17 +5,28 @@
 ### 📁 目录结构
 ```
 android-bot/
-├── bot.py           # Bot 核心逻辑（ADB、模板匹配、OCR、监控）
-├── gui.py           # PySide6 GUI 界面
-├── config.yaml      # 配置文件（改这里）
-├── pyproject.toml   # 项目依赖
+├── bot.py                # Bot 核心逻辑（ADB、模板匹配、OCR、监控）
+├── gui.py                # PySide6 GUI 界面
+├── config.yaml           # 配置文件（改这里）
+├── test_screenshot.py    # ADB 截图单独测试脚本
+├── pyproject.toml        # 项目依赖
 ├── requirements.txt
-├── build.spec       # PyInstaller 打包配置
-├── 启动Bot.bat      # Windows 双击启动
-├── 图标.png         # 应用图标
-├── templates/       # 模板图片（按钮截图）
-└── screenshots/     # 运行时截图（调试用）
+├── build.spec            # PyInstaller 打包配置
+├── 启动Bot.bat           # Windows 双击启动
+├── icon.png              # 应用图标
+├── templates/            # 模板图片（按钮截图）
+└── screenshots/          # 运行时截图（调试用）
 ```
+
+### 🆕 最近更新
+
+- **GUI 快速开关**：任务、步骤链、监控项列表改为滑动开关，实时生效无需重启 Bot
+- **立即执行按钮**：任务、链、监控项均支持点击“执行”，中断当前任务并立即运行指定项
+- **执行后调整（post_adjust）**：任务/链执行后自动修改监控缓存值（如消耗体力、减少队列）
+- **步骤链失败重试**：链中某一步失败时重试一次，再次失败则停止该链并继续后续任务
+- **高亮当前任务**：GUI 中高亮显示正在执行的任务/链
+- **ADB 截图兜底**：`exec-out` 超时失败时自动回退到“保存到设备再 pull”，避免 Bot 卡死
+- **ADB 截图测试脚本**：新增 `test_screenshot.py` 用于单独排查截图问题
 
 ---
 
@@ -92,9 +103,14 @@ python bot.py --test screenshots/current.png templates/你的按钮.png
 启动后自动运行 Bot，界面分为：
 
 - **左侧**：配置面板（设备、任务、步骤链、监控项）
+  - 每项右侧有**滑动开关**，点击立即启用/禁用，无需重启 Bot
+  - 每项右侧有**执行按钮**，点击会中断当前任务并立即执行该项
+  - 双击项目可编辑详情（模板、坐标、post_adjust 等）
 - **右侧**：scrcpy 实时画面 / 静态截图
 - **右上角控制按钮**：关屏（熄灭手机屏幕仅电脑显示）、Home、返回、多任务
 - **状态栏**：显示体力、剩余队列等监控数据
+
+**高亮**：正在执行的任务/链会在列表中高亮显示。
 
 **关屏说明**：优先通过 scrcpy 快捷键（Alt+O）实现原生关屏，电源键可正常恢复；scrcpy 未嵌入时降级为亮度方式。
 
@@ -137,6 +153,9 @@ tasks:
     offset_y: 0
     cooldown: 0.3
     max_triggers: 0      # 0=无限
+    post_adjust:         # 执行后调整监控值（可选）
+      - "体力检测 current -30"
+      - "队列检测 value -1"
 ```
 
 **动作类型：**
@@ -170,9 +189,13 @@ chains:
         action: tap
         cooldown: 0.1
     close_template: templates/x.png  # 执行完毕后关闭页面
+    post_adjust:         # 执行后调整监控值（可选）
+      - "体力检测 current -25"
 ```
 
 **skippable**：设为 true 时，如果此步骤的模板在屏幕上找不到，自动跳到下一步，避免链卡住。
+
+**失败重试**：链中某一步匹配失败后，会自动重试一次；再次失败则停止该链并继续后续任务。
 
 #### 监控项 (monitors)
 
@@ -216,6 +239,18 @@ monitors:
 | `current` | 报告当前值（如体力 126/200 → 126） |
 | `remaining` | 报告剩余值（如队列 3/4 → 1） |
 
+#### 执行后调整 (post_adjust)
+
+任务或步骤链执行完毕后，可以按规则修改监控项的缓存值，避免频繁 OCR。
+
+```yaml
+post_adjust:
+  - "体力检测 current -30"   # 体力检测的 current 减 30
+  - "队列检测 value -1"      # 队列检测的 value 减 1
+```
+
+格式：`监控名 字段 操作数值`，字段支持 `current`、`total`、`value`，操作只支持 `+` 或 `-`。
+
 #### scrcpy 配置
 
 ```yaml
@@ -258,3 +293,11 @@ scrcpy:
 **Q: 关屏后电源键无法恢复**
 - scrcpy 嵌入时使用原生快捷键关屏，电源键可正常恢复
 - scrcpy 未嵌入时降级为亮度方式，电源键也可恢复
+
+**Q: ADB 截图卡顿或超时**
+- Bot 已内置兜底：快路径 `exec-out` 失败时会自动改用 `shell screencap + pull`
+- 可单独测试 ADB 截图：
+  ```bash
+  python test_screenshot.py --count 5
+  ```
+- 如果截图一直失败，尝试重新开关手机的「无线调试」或重启 WiFi

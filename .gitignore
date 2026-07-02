@@ -9,3 +9,5 @@ build/
 *.egg-info/
 .venv/
 uv.lock
+templates/crop*.png
+test_*.py

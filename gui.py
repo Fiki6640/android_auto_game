@@ -41,6 +41,54 @@ REPORT_LABELS = {
 REPORT_VALUES = {v: k for k, v in REPORT_LABELS.items()}
 
 
+# ==================== 开关按钮 ====================
+class SwitchButton(QWidget):
+    """自定义滑动开关按钮"""
+    toggled = Signal(bool)
+
+    def __init__(self, checked: bool = True, parent=None):
+        super().__init__(parent)
+        self._checked = checked
+        self.setFixedSize(40, 22)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+
+    def isChecked(self) -> bool:
+        return self._checked
+
+    def setChecked(self, checked: bool):
+        if self._checked != checked:
+            self._checked = checked
+            self.update()
+            self.toggled.emit(checked)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.setChecked(not self._checked)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 背景
+        if self._checked:
+            painter.setBrush(QColor("#4caf50"))
+        else:
+            painter.setBrush(QColor("#757575"))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(0, 0, self.width(), self.height(), self.height() // 2, self.height() // 2)
+
+        # 滑块
+        painter.setBrush(QColor("white"))
+        margin = 2
+        diameter = self.height() - margin * 2
+        if self._checked:
+            x = self.width() - diameter - margin
+        else:
+            x = margin
+        painter.drawEllipse(x, margin, diameter, diameter)
+        painter.end()
+
+
 # ==================== 截图画布（内部组件）====================
 
 class _ScreenshotCanvas(QLabel):
@@ -631,30 +679,39 @@ class BotThread(QThread):
     monitor_signal = Signal(dict)
     status_signal = Signal(str)
     finished_signal = Signal()
+    active_task_signal = Signal(str, str)
 
-    def __init__(self, config_path: str, device_override: str = None):
+    def __init__(self, config_path: str, device_override: str = None, single_shot: bool = False):
         super().__init__()
         self.config_path = config_path
         self.device_override = device_override
+        self.single_shot = single_shot
         self._bot = None
         self._stop_flag = False
 
     def run(self):
         try:
             from bot import GameBot
+            self.log_signal.emit("[DEBUG] BotThread: 正在创建 GameBot...")
             self._bot = GameBot(
                 self.config_path,
                 device_override=self.device_override,
                 on_screenshot=self._on_screenshot,
                 on_log=self._on_log,
                 on_monitor=self._on_monitor,
+                single_shot=self.single_shot,
+                on_active_task=self._on_active_task,
             )
+            self.log_signal.emit("[DEBUG] BotThread: GameBot 创建成功，开始运行")
             self.status_signal.emit("运行中")
             self._bot.run()
+            self.log_signal.emit("[DEBUG] BotThread: GameBot.run() 正常退出")
         except SystemExit:
-            pass
+            self.log_signal.emit("[DEBUG] BotThread: GameBot 调用了 sys.exit()")
         except Exception as e:
             self.log_signal.emit(f"[ERROR] Bot 异常: {e}")
+            import traceback
+            self.log_signal.emit(f"[ERROR] {traceback.format_exc()}")
         finally:
             self.status_signal.emit("已停止")
             self.finished_signal.emit()
@@ -671,10 +728,19 @@ class BotThread(QThread):
         if not self._stop_flag:
             self.monitor_signal.emit(values)
 
+    def _on_active_task(self, category, name):
+        if not self._stop_flag:
+            self.active_task_signal.emit(category, name)
+
     def stop(self):
         self._stop_flag = True
         if self._bot:
             self._bot._stop_requested = True
+
+    def set_enabled_override(self, category: str, name: str, enabled: bool):
+        """动态设置任务/链/监控的启用状态"""
+        if self._bot:
+            self._bot.set_enabled_override(category, name, enabled)
 
 
 # ==================== 辅助：截图并弹窗框选 ====================
@@ -841,6 +907,14 @@ class TaskEditDialog(QDialog):
             self.max_triggers_spin.setValue(data.get("max_triggers", 0))
             layout.addRow("最大触发(0=无限):", self.max_triggers_spin)
 
+        # 执行后调整
+        if not is_step:
+            self.post_adjust_text = QTextEdit()
+            self.post_adjust_text.setPlaceholderText("例如：\n体力检测 current -30\n队列检测 value -1")
+            self.post_adjust_text.setMaximumHeight(80)
+            self.post_adjust_text.setPlainText("\n".join(data.get("post_adjust", [])))
+            layout.addRow("执行后调整:", self.post_adjust_text)
+
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
@@ -901,6 +975,8 @@ class TaskEditDialog(QDialog):
             d["skippable"] = self.skippable_cb.isChecked()
         if not self.is_step:
             d["max_triggers"] = self.max_triggers_spin.value()
+            text = self.post_adjust_text.toPlainText().strip()
+            d["post_adjust"] = [line.strip() for line in text.splitlines() if line.strip()]
         return d
 
 
@@ -988,6 +1064,16 @@ class ChainEditDialog(QDialog):
         steps_btn_row.addWidget(down_step_btn)
         steps_layout.addLayout(steps_btn_row)
         layout.addWidget(steps_group)
+
+        # 执行后调整
+        post_group = QGroupBox("执行后调整")
+        post_layout = QVBoxLayout(post_group)
+        self.post_adjust_text = QTextEdit()
+        self.post_adjust_text.setPlaceholderText("例如：\n体力检测 current -30\n队列检测 value -1")
+        self.post_adjust_text.setMaximumHeight(80)
+        self.post_adjust_text.setPlainText("\n".join(data.get("post_adjust", [])))
+        post_layout.addWidget(self.post_adjust_text)
+        layout.addWidget(post_group)
 
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btn_box.accepted.connect(self.accept)
@@ -1106,6 +1192,8 @@ class ChainEditDialog(QDialog):
                     "op": parts[2], "value": int(parts[3]),
                 })
         d["skip_conditions"] = skip_conds
+        text = self.post_adjust_text.toPlainText().strip()
+        d["post_adjust"] = [line.strip() for line in text.splitlines() if line.strip()]
         return d
 
 
@@ -1337,6 +1425,10 @@ class ConfigPanel(QWidget):
     """左侧配置面板"""
 
     config_changed = Signal()
+    execute_task = Signal(dict)
+    execute_chain = Signal(dict)
+    execute_monitor = Signal(dict)
+    enabled_changed = Signal(str, str, bool)  # category, name, enabled
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1460,6 +1552,31 @@ class ConfigPanel(QWidget):
     def _get_device_info(self):
         return self.device_edit.text(), self.adb_path_edit.text()
 
+    def create_list_item_widget(self, name: str, enabled: bool) -> QWidget:
+        """创建列表项自定义 widget：开关 + 名称 + 执行按钮"""
+        widget = QWidget()
+        hlayout = QHBoxLayout(widget)
+        hlayout.setContentsMargins(4, 2, 4, 2)
+        hlayout.setSpacing(8)
+
+        switch = SwitchButton(checked=enabled)
+        switch.setFixedSize(36, 20)
+        hlayout.addWidget(switch)
+
+        label = QLabel(name)
+        label.setStyleSheet("color: #dcdcdc; font-weight: normal;")
+        hlayout.addWidget(label, 1)
+
+        exec_btn = QPushButton("执行")
+        exec_btn.setFixedSize(40, 22)
+        exec_btn.setStyleSheet(
+            "QPushButton { background: #2e7d32; color: white; border: none; border-radius: 4px; font-size: 11px; }"
+            "QPushButton:hover { background: #388e3c; }"
+        )
+        hlayout.addWidget(exec_btn)
+
+        return widget
+
     def load_config(self, config: dict):
         self._config = config
         self.device_edit.setText(config.get("device", ""))
@@ -1468,21 +1585,58 @@ class ConfigPanel(QWidget):
         self.adb_path_edit.setText(config.get("adb_path", "adb"))
         self.screenshot_dir_edit.setText(config.get("screenshot_dir", "screenshots"))
 
-        self.tasks_list.clear()
-        for t in config.get("tasks", []):
-            enabled = "✅" if t.get("enabled", True) else "❌"
-            self.tasks_list.addItem(f"{enabled} {t.get('name', '')}")
+        self._refresh_list_widget(self.tasks_list, config.get("tasks", []), "task")
+        self._refresh_list_widget(self.chains_list, config.get("chains", []), "chain")
+        self._refresh_list_widget(self.monitors_list, config.get("monitors", []), "monitor")
 
-        self.chains_list.clear()
-        for c in config.get("chains", []):
-            enabled = "✅" if c.get("enabled", True) else "❌"
-            steps = len(c.get("steps", []))
-            self.chains_list.addItem(f"{enabled} {c.get('name', '')} ({steps}步)")
+    def _refresh_list_widget(self, list_widget: QListWidget, items: list, item_type: str):
+        """刷新列表 widget，使用自定义开关+执行按钮布局"""
+        list_widget.clear()
+        for i, item in enumerate(items):
+            name = item.get("name", "")
+            enabled = item.get("enabled", True)
+            if item_type == "chain":
+                steps = len(item.get("steps", []))
+                display_name = f"{name} ({steps}步)"
+            else:
+                display_name = name
 
-        self.monitors_list.clear()
-        for m in config.get("monitors", []):
-            enabled = "✅" if m.get("enabled", True) else "❌"
-            self.monitors_list.addItem(f"{enabled} {m.get('name', '')}")
+            widget = self.create_list_item_widget(display_name, enabled)
+            switch = widget.findChild(SwitchButton)
+            if switch:
+                switch.toggled.connect(lambda checked, i=i, t=item_type: self._on_switch_toggled(i, checked, t))
+
+            for child in widget.children():
+                if isinstance(child, QPushButton) and child.text() == "执行":
+                    child.clicked.connect(lambda checked, i=i, t=item_type: self._on_execute_clicked(i, t))
+                    break
+
+            list_item = QListWidgetItem()
+            list_item.setSizeHint(widget.sizeHint())
+            list_widget.addItem(list_item)
+            list_widget.setItemWidget(list_item, widget)
+
+    def _on_switch_toggled(self, idx: int, checked: bool, item_type: str):
+        """开关切换回调：立即更新 enabled 状态并通知运行中的 Bot"""
+        key = item_type + "s"  # task->tasks, chain->chains, monitor->monitors
+        if key in self._config and idx < len(self._config[key]):
+            self._config[key][idx]["enabled"] = checked
+            name = self._config[key][idx].get("name", "")
+            self.config_changed.emit()
+            self.enabled_changed.emit(item_type, name, checked)
+
+    def _on_execute_clicked(self, idx: int, item_type: str):
+        """执行按钮点击回调"""
+        key = item_type + "s"
+        if key in self._config and idx < len(self._config[key]):
+            item = dict(self._config[key][idx])
+            item["enabled"] = True  # 强制执行
+            if item_type == "task":
+                self.execute_task.emit(item)
+            elif item_type == "chain":
+                self.execute_chain.emit(item)
+            elif item_type == "monitor":
+                self.execute_monitor.emit(item)
 
     def get_config(self) -> dict:
         config = dict(self._config)
@@ -1502,13 +1656,13 @@ class ConfigPanel(QWidget):
     def _add_task(self):
         device, adb_path = self._get_device_info()
         task = {"name": "新任务", "enabled": True, "template": "", "action": "tap",
-                "offset_x": 0, "offset_y": 0, "cooldown": 0.3, "max_triggers": 0}
+                "offset_x": 0, "offset_y": 0, "cooldown": 0.3, "max_triggers": 0,
+                "post_adjust": []}
         dlg = TaskEditDialog(task, self, device=device, adb_path=adb_path)
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
             self._config.setdefault("tasks", []).append(data)
-            enabled = "✅" if data.get("enabled", True) else "❌"
-            self.tasks_list.addItem(f"{enabled} {data.get('name', '')}")
+            self._refresh_list_widget(self.tasks_list, self._config.get("tasks", []), "task")
             self.config_changed.emit()
 
     def _edit_task(self):
@@ -1519,16 +1673,14 @@ class ConfigPanel(QWidget):
         dlg = TaskEditDialog(self._config["tasks"][idx], self, device=device, adb_path=adb_path)
         if dlg.exec() == QDialog.Accepted:
             self._config["tasks"][idx] = dlg.get_data()
-            data = dlg.get_data()
-            enabled = "✅" if data.get("enabled", True) else "❌"
-            self.tasks_list.item(idx).setText(f"{enabled} {data.get('name', '')}")
+            self._refresh_list_widget(self.tasks_list, self._config.get("tasks", []), "task")
             self.config_changed.emit()
 
     def _del_task(self):
         idx = self.tasks_list.currentRow()
         if idx >= 0:
             self._config["tasks"].pop(idx)
-            self.tasks_list.takeItem(idx)
+            self._refresh_list_widget(self.tasks_list, self._config.get("tasks", []), "task")
             self.config_changed.emit()
 
     # ---- 链 ----
@@ -1537,15 +1689,13 @@ class ConfigPanel(QWidget):
 
     def _add_chain(self):
         device, adb_path = self._get_device_info()
-        chain = {"name": "新链", "enabled": True, "reset_timeout": 30, "steps": []}
+        chain = {"name": "新链", "enabled": True, "reset_timeout": 30, "steps": [], "post_adjust": []}
         dlg = ChainEditDialog(chain, self._get_monitor_names(), self,
                               device=device, adb_path=adb_path)
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
             self._config.setdefault("chains", []).append(data)
-            enabled = "✅" if data.get("enabled", True) else "❌"
-            steps = len(data.get("steps", []))
-            self.chains_list.addItem(f"{enabled} {data.get('name', '')} ({steps}步)")
+            self._refresh_list_widget(self.chains_list, self._config.get("chains", []), "chain")
             self.config_changed.emit()
 
     def _edit_chain(self):
@@ -1557,17 +1707,14 @@ class ConfigPanel(QWidget):
                               device=device, adb_path=adb_path)
         if dlg.exec() == QDialog.Accepted:
             self._config["chains"][idx] = dlg.get_data()
-            data = dlg.get_data()
-            enabled = "✅" if data.get("enabled", True) else "❌"
-            steps = len(data.get("steps", []))
-            self.chains_list.item(idx).setText(f"{enabled} {data.get('name', '')} ({steps}步)")
+            self._refresh_list_widget(self.chains_list, self._config.get("chains", []), "chain")
             self.config_changed.emit()
 
     def _del_chain(self):
         idx = self.chains_list.currentRow()
         if idx >= 0:
             self._config["chains"].pop(idx)
-            self.chains_list.takeItem(idx)
+            self._refresh_list_widget(self.chains_list, self._config.get("chains", []), "chain")
             self.config_changed.emit()
 
     # ---- 监控 ----
@@ -1579,8 +1726,7 @@ class ConfigPanel(QWidget):
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
             self._config.setdefault("monitors", []).append(data)
-            enabled = "✅" if data.get("enabled", True) else "❌"
-            self.monitors_list.addItem(f"{enabled} {data.get('name', '')}")
+            self._refresh_list_widget(self.monitors_list, self._config.get("monitors", []), "monitor")
             self.config_changed.emit()
 
     def _edit_monitor(self):
@@ -1592,16 +1738,14 @@ class ConfigPanel(QWidget):
                                 device=device, adb_path=adb_path)
         if dlg.exec() == QDialog.Accepted:
             self._config["monitors"][idx] = dlg.get_data()
-            data = dlg.get_data()
-            enabled = "✅" if data.get("enabled", True) else "❌"
-            self.monitors_list.item(idx).setText(f"{enabled} {data.get('name', '')}")
+            self._refresh_list_widget(self.monitors_list, self._config.get("monitors", []), "monitor")
             self.config_changed.emit()
 
     def _del_monitor(self):
         idx = self.monitors_list.currentRow()
         if idx >= 0:
             self._config["monitors"].pop(idx)
-            self.monitors_list.takeItem(idx)
+            self._refresh_list_widget(self.monitors_list, self._config.get("monitors", []), "monitor")
             self.config_changed.emit()
 
 
@@ -1617,7 +1761,7 @@ class MainWindow(QMainWindow):
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("AndroidBot.GameAutomation")
 
         self.setWindowTitle("无尽冬日 - 自动化")
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "图标.png")
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         else:
@@ -1648,6 +1792,7 @@ class MainWindow(QMainWindow):
         self._config_path = os.path.join(self._app_dir, "config.yaml")
         self._config = {}
         self._bot_thread = None
+        self._bot_thread_id = 0  # 用于区分新旧 Bot 线程
 
         self._init_ui()
         self._init_menu()
@@ -1664,6 +1809,10 @@ class MainWindow(QMainWindow):
         self.config_panel.setMinimumWidth(340)
         self.config_panel.setMaximumWidth(500)
         self.config_panel.config_changed.connect(self._save_config)
+        self.config_panel.execute_task.connect(self._execute_single_task)
+        self.config_panel.execute_chain.connect(self._execute_single_chain)
+        self.config_panel.execute_monitor.connect(self._execute_single_monitor)
+        self.config_panel.enabled_changed.connect(self._on_enabled_changed)
         splitter.addWidget(self.config_panel)
 
         # 右侧：scrcpy/截图
@@ -1767,8 +1916,8 @@ class MainWindow(QMainWindow):
             self.config_panel.append_log("[WARNING] templates.zip 不存在，跳过模板解压")
 
         # 复制图标
-        icon_src = os.path.join(res_dir, "图标.png")
-        icon_dst = os.path.join(self._app_dir, "图标.png")
+        icon_src = os.path.join(res_dir, "icon.png")
+        icon_dst = os.path.join(self._app_dir, "icon.png")
         if os.path.exists(icon_src) and not os.path.exists(icon_dst):
             shutil.copy2(icon_src, icon_dst)
             self.config_panel.append_log("[INFO] 已复制图标文件")
@@ -1789,14 +1938,18 @@ class MainWindow(QMainWindow):
     def _start_bot(self):
         if self._bot_thread and self._bot_thread.isRunning():
             return
+        self.config_panel.append_log("[DEBUG] _start_bot: 保存配置并启动正常 Bot...")
         self._save_config()
 
+        self._bot_thread_id += 1
+        current_id = self._bot_thread_id
         self._bot_thread = BotThread(self._config_path)
         self._bot_thread.log_signal.connect(self.config_panel.append_log)
         self._bot_thread.screenshot_signal.connect(self._on_screenshot_update)
         self._bot_thread.monitor_signal.connect(self._on_monitor_update)
         self._bot_thread.status_signal.connect(self._on_bot_status)
-        self._bot_thread.finished_signal.connect(self._on_bot_finished)
+        self._bot_thread.finished_signal.connect(lambda: self._on_bot_finished(current_id))
+        self._bot_thread.active_task_signal.connect(self._on_active_task)
         self._bot_thread._stop_flag = False
 
         self._bot_thread.start()
@@ -1808,33 +1961,158 @@ class MainWindow(QMainWindow):
 
     def _stop_bot(self):
         if self._bot_thread and self._bot_thread.isRunning():
+            self.config_panel.append_log("[DEBUG] _stop_bot: 正在停止旧 Bot...")
             self._bot_thread.stop()
-            self._bot_thread.wait(3000)
+            # 等待线程结束，截图超时已缩短到5s，最多等6s
+            self._bot_thread.wait(6000)
             if self._bot_thread.isRunning():
+                self.config_panel.append_log("[DEBUG] _stop_bot: 线程未在6s内结束，强制终止")
                 self._bot_thread.terminate()
-            self._on_bot_finished()
+                self._bot_thread.wait(2000)
+            else:
+                self.config_panel.append_log("[DEBUG] _stop_bot: 旧 Bot 已停止")
+            # 不手动 disconnect；旧线程的 finished_signal 通过 thread_id 过滤
+        else:
+            self.config_panel.append_log("[DEBUG] _stop_bot: 无运行中的 Bot")
+        self._bot_thread = None
 
     def _on_bot_status(self, status):
         self.statusBar().showMessage(f"Bot: {status}")
 
-    def _on_bot_finished(self):
+    def _on_bot_finished(self, thread_id: int = -1):
+        """Bot 线程结束回调；通过 thread_id 忽略旧线程的延迟信号"""
+        if thread_id != -1 and thread_id != self._bot_thread_id:
+            self.config_panel.append_log(f"[DEBUG] _on_bot_finished: 忽略过期线程 #{thread_id} 的结束信号")
+            return
         self.start_action.setEnabled(True)
         self.stop_action.setEnabled(False)
         self.statusBar().showMessage("Bot 已停止")
+        # 清除高亮
+        self._highlight_active(None, None)
+
+    def _on_enabled_changed(self, category: str, name: str, enabled: bool):
+        """开关切换时，动态更新运行中的 Bot"""
+        if self._bot_thread and self._bot_thread.isRunning():
+            self._bot_thread.set_enabled_override(category, name, enabled)
+
+    def _on_active_task(self, category: str, name: str):
+        """高亮当前正在执行的任务/链"""
+        self._highlight_active(category, name)
+
+    def _highlight_active(self, category: str, name: str):
+        """在列表中高亮指定项，取消其他项高亮"""
+        lists = {
+            "task": self.config_panel.tasks_list,
+            "chain": self.config_panel.chains_list,
+            "monitor": self.config_panel.monitors_list,
+        }
+
+        for cat, list_widget in lists.items():
+            for i in range(list_widget.count()):
+                item = list_widget.item(i)
+                widget = list_widget.itemWidget(item)
+                if widget:
+                    label = widget.findChild(QLabel)
+                    if label:
+                        is_active = (cat == category and label.text().startswith(name))
+                        if is_active:
+                            label.setStyleSheet("color: #ffd54f; font-weight: bold;")
+                        else:
+                            label.setStyleSheet("color: #dcdcdc; font-weight: normal;")
+
+    def _execute_single_task(self, task_def: dict):
+        """立即执行单个任务：停止当前 Bot → 执行指定任务 → 恢复"""
+        try:
+            self.config_panel.append_log(f"[INFO] 立即执行任务: {task_def.get('name', '')}")
+            self._stop_bot()
+            self._run_single_item([task_def], [], [])
+        except Exception as e:
+            self.config_panel.append_log(f"[ERROR] 执行任务失败: {e}")
+            self._on_bot_finished()
+
+    def _execute_single_chain(self, chain_def: dict):
+        """立即执行单个步骤链"""
+        try:
+            self.config_panel.append_log(f"[INFO] 立即执行链: {chain_def.get('name', '')}")
+            self._stop_bot()
+            self._run_single_item([], [chain_def], [])
+        except Exception as e:
+            self.config_panel.append_log(f"[ERROR] 执行链失败: {e}")
+            self._on_bot_finished()
+
+    def _execute_single_monitor(self, monitor_def: dict):
+        """立即执行单个监控项"""
+        try:
+            self.config_panel.append_log(f"[INFO] 立即执行监控: {monitor_def.get('name', '')}")
+            self._stop_bot()
+            self._run_single_item([], [], [monitor_def])
+        except Exception as e:
+            self.config_panel.append_log(f"[ERROR] 执行监控失败: {e}")
+            self._on_bot_finished()
+
+    def _run_single_item(self, tasks: list, chains: list, monitors: list):
+        """以单次模式运行指定任务/链"""
+        config = self.config_panel.get_config()
+        config["tasks"] = tasks
+        config["chains"] = chains
+        config["monitors"] = monitors
+        tmp_path = os.path.join(self._app_dir, ".single_shot_config.yaml")
+
+        self.config_panel.append_log(f"[DEBUG] _run_single_item: 写入临时配置到 {tmp_path}")
+        self.config_panel.append_log(f"[DEBUG] _run_single_item: tasks={[t.get('name') for t in tasks]}, chains={[c.get('name') for c in chains]}, monitors={[m.get('name') for m in monitors]}")
+        self.config_panel.append_log(f"[DEBUG] _run_single_item: device={config.get('device', '')}")
+
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+        self._bot_thread_id += 1
+        current_id = self._bot_thread_id
+        self._bot_thread = BotThread(tmp_path, single_shot=True)
+        self._bot_thread.log_signal.connect(self.config_panel.append_log)
+        self._bot_thread.screenshot_signal.connect(self._on_screenshot_update)
+        self._bot_thread.monitor_signal.connect(self._on_monitor_update)
+        self._bot_thread.status_signal.connect(self._on_bot_status)
+        self._bot_thread.finished_signal.connect(lambda: self._on_single_shot_done(current_id))
+        self._bot_thread.active_task_signal.connect(self._on_active_task)
+        self._bot_thread._stop_flag = False
+
+        self.config_panel.append_log("[DEBUG] _run_single_item: 启动单次执行 Bot 线程...")
+        self._bot_thread.start()
+        self.start_action.setEnabled(False)
+        self.stop_action.setEnabled(True)
+
+    def _on_single_shot_done(self, thread_id: int):
+        """单次执行完成后，重新启动正常 Bot"""
+        if thread_id != self._bot_thread_id:
+            self.config_panel.append_log(f"[DEBUG] _on_single_shot_done: 忽略过期线程 #{thread_id}")
+            return
+        self.config_panel.append_log("[DEBUG] _on_single_shot_done: 单次执行完成，准备重启正常 Bot")
+        self._on_bot_finished(thread_id)
+        # 清理临时配置
+        tmp_path = os.path.join(self._app_dir, ".single_shot_config.yaml")
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        # 重新启动正常 Bot
+        QTimer.singleShot(500, self._start_bot)
 
     def _on_screenshot_update(self, path):
         self.scrcpy_widget.update_screenshot(path)
 
     def _on_monitor_update(self, values):
         """更新状态栏监控数据（体力、队列等）"""
-        for name, data in values.items():
-            current = data.get("current", "?")
-            total = data.get("total", "?")
-            value = data.get("value", "?")
-            if "体力" in name:
-                self._stamina_label.setText(f"体力: {current}/{total}")
-            elif "队列" in name:
-                self._queue_label.setText(f"剩余队列: {value}")
+        try:
+            for name, data in values.items():
+                current = data.get("current", "?")
+                total = data.get("total", "?")
+                value = data.get("value", "?")
+                if "体力" in name:
+                    self._stamina_label.setText(f"体力: {current}/{total}")
+                elif "队列" in name:
+                    self._queue_label.setText(f"剩余队列: {value}")
+        except Exception as e:
+            self.config_panel.append_log(f"[DEBUG] _on_monitor_update 异常: {e}")
 
     # ---- Scrcpy ----
     def _start_scrcpy(self):
@@ -1881,11 +2159,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "错误", str(e))
 
     def closeEvent(self, event):
-        if self._bot_thread and self._bot_thread.isRunning():
-            self._bot_thread.stop()
-            self._bot_thread.wait(3000)
-            if self._bot_thread.isRunning():
-                self._bot_thread.terminate()
+        self._stop_bot()
         self.scrcpy_widget.stop()
         event.accept()
 

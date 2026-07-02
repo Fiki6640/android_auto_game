@@ -30,7 +30,7 @@ datas = [
     (os.path.join(ROOT, 'config.yaml'), '.'),
     (os.path.join(ROOT, 'templates.zip'), '.'),
     # 图标
-    (os.path.join(ROOT, '图标.png'), '.'),
+    (os.path.join(ROOT, 'icon.png'), '.'),
 ]
 
 # 过滤掉不存在的路径
@@ -91,5 +91,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(ROOT, '图标.png') if os.path.exists(os.path.join(ROOT, '图标.png')) else None,
+    icon=os.path.join(ROOT, 'icon.png') if os.path.exists(os.path.join(ROOT, 'icon.png')) else None,
 )
